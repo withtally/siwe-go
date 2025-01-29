@@ -1,6 +1,7 @@
 package siwe
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"fmt"
 	"net/url"
@@ -302,7 +303,7 @@ func (m *Message) VerifyEIP191(signature string) (*ecdsa.PublicKey, error) {
 }
 
 // Verify validates time constraints and integrity of the object by matching it's signature.
-func (m *Message) Verify(signature string, domain *string, nonce *string, timestamp *time.Time) (*ecdsa.PublicKey, error) {
+func (m *Message) Verify(signature string, domain *string, nonce *string, timestamp *time.Time, provider Provider) (*ecdsa.PublicKey, error) {
 	var err error
 
 	if timestamp != nil {
@@ -327,7 +328,20 @@ func (m *Message) Verify(signature string, domain *string, nonce *string, timest
 		}
 	}
 
-	return m.VerifyEIP191(signature)
+	// Try ECDSA verification first
+	pkey, err := m.VerifyEIP191(signature)
+	if err == nil {
+		return pkey, nil
+	}
+
+	// If ECDSA fails and we have a provider, try ERC-1271
+	if provider != nil {
+		if err := m.VerifyERC1271(context.Background(), signature, provider); err == nil {
+			return nil, nil // Contract signatures don't have a public key
+		}
+	}
+
+	return nil, err
 }
 
 func (m *Message) prepareMessage() string {
@@ -384,4 +398,52 @@ func (m *Message) prepareMessage() string {
 
 func (m *Message) String() string {
 	return m.prepareMessage()
+}
+
+// VerifyERC1271 validates the signature using EIP-1271 contract verification
+func (m *Message) VerifyERC1271(ctx context.Context, signature string, provider Provider) error {
+	if provider == nil {
+		return &InvalidSignature{"Provider is required for ERC-1271 verification"}
+	}
+
+	if isEmpty(&signature) {
+		return &InvalidSignature{"Signature cannot be empty"}
+	}
+
+	sigBytes, err := hexutil.Decode(signature)
+	if err != nil {
+		return &InvalidSignature{"Failed to decode signature"}
+	}
+
+	// Get the message hash using EIP-191
+	hash := m.eip191Hash()
+
+	// Encode the isValidSignature call
+	// Function selector (4 bytes) + hash (32 bytes) + offset to signature bytes (32 bytes) 
+	// + signature length (32 bytes) + signature bytes
+	calldata := make([]byte, 4+32+32+32+len(sigBytes))
+	copy(calldata[0:4], IsValidSignatureSelector[:])
+	copy(calldata[4:36], hash)
+	copy(calldata[36:68], []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64})
+	copy(calldata[68:100], []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, byte(len(sigBytes))})
+	copy(calldata[100:], sigBytes)
+
+	// Call the contract
+	result, err := provider.CallContract(ctx, m.address, calldata)
+	if err != nil {
+		return &InvalidSignature{fmt.Sprintf("Contract call failed: %v", err)}
+	}
+
+	// Check the magic value
+	if len(result) != 4 {
+		return &InvalidSignature{"Invalid response length from contract"}
+	}
+
+	var returnedMagic [4]byte
+	copy(returnedMagic[:], result[:4])
+	if returnedMagic != ERC1271MagicValue {
+		return &InvalidSignature{"Contract signature verification failed"}
+	}
+
+	return nil
 }

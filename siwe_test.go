@@ -1,6 +1,7 @@
 package siwe
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"encoding/json"
 	"io"
@@ -391,6 +392,60 @@ func verificationPositive(t *testing.T, cases map[string]interface{}) {
 
 		assert.Nil(t, err, name)
 	}
+}
+
+type mockProvider struct {
+	validSignatures map[string]bool
+}
+
+func (p *mockProvider) CallContract(ctx context.Context, to common.Address, data []byte) ([]byte, error) {
+	if p.validSignatures == nil {
+		p.validSignatures = make(map[string]bool)
+	}
+
+	// Extract the signature from the calldata (skip selector and hash)
+	sigOffset := 4 + 32 + 32 // selector + hash + offset
+	sigLenStart := sigOffset + 32 - 1
+	sigLen := int(data[sigLenStart])
+	signature := data[sigOffset+32 : sigOffset+32+sigLen]
+
+	if p.validSignatures[string(signature)] {
+		return ERC1271MagicValue[:], nil
+	}
+	return []byte{0x00, 0x00, 0x00, 0x00}, nil
+}
+
+func TestValidateERC1271(t *testing.T) {
+	provider := &mockProvider{
+		validSignatures: map[string]bool{},
+	}
+
+	privateKey, address := createWallet(t)
+	message, err := InitMessage(domain, address, uri, nonce, options)
+	assert.Nil(t, err)
+
+	hash := message.eip191Hash()
+	signature, err := crypto.Sign(hash, privateKey)
+	signature[64] += 27
+	assert.Nil(t, err)
+
+	// Test that ECDSA verification still works with provider
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, provider)
+	assert.Nil(t, err)
+
+	// Test that ERC-1271 verification works when signature is registered
+	contractAddr := "0x4242424242424242424242424242424242424242"
+	message, err = InitMessage(domain, contractAddr, uri, nonce, options)
+	assert.Nil(t, err)
+
+	provider.validSignatures[string(signature)] = true
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, provider)
+	assert.Nil(t, err)
+
+	// Test that ERC-1271 verification fails when signature is not registered
+	provider.validSignatures[string(signature)] = false
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, provider)
+	assert.Error(t, err)
 }
 
 func TestGlobalTestVector(t *testing.T) {
