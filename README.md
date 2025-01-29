@@ -10,6 +10,16 @@ SIWE can be easily installed in any Go project by running:
 go get -u github.com/spruceid/siwe-go
 ```
 
+## Testing
+
+To run the test suite, use:
+
+```bash
+go test ./... -v
+```
+
+Note: Running individual test files directly (e.g., `go test siwe_test.go`) will not work as it excludes package-level definitions. Always run tests at the package level using `go test ./...`.
+
 ## Usage
 
 SIWE exposes a Message struct which implements EIP-4361.
