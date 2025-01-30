@@ -1,6 +1,7 @@
 package siwe
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"encoding/json"
 	"io"
@@ -172,7 +173,7 @@ func TestPrepareParseRequired(t *testing.T) {
 }
 
 func TestValidateEmpty(t *testing.T) {
-	_, err := message.Verify("", nil, nil, nil)
+	_, err := message.Verify("", nil, nil, nil, nil)
 
 	if assert.Error(t, err) {
 		assert.Equal(t, &InvalidSignature{"Signature cannot be empty"}, err)
@@ -204,7 +205,7 @@ func TestValidateNotBefore(t *testing.T) {
 
 	assert.Nil(t, err)
 
-	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil)
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, nil)
 
 	if assert.Error(t, err) {
 		assert.Equal(t, &InvalidMessage{"Message not yet valid"}, err)
@@ -225,7 +226,7 @@ func TestValidateExpirationTime(t *testing.T) {
 
 	assert.Nil(t, err)
 
-	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil)
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, nil)
 
 	if assert.Error(t, err) {
 		assert.Equal(t, &ExpiredMessage{"Message expired"}, err)
@@ -244,7 +245,7 @@ func TestValidate(t *testing.T) {
 
 	assert.Nil(t, err)
 
-	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil)
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, nil)
 
 	assert.Nil(t, err)
 }
@@ -264,7 +265,7 @@ func TestValidateTampered(t *testing.T) {
 
 	message, err = InitMessage(domain, otherAddress, uri, nonce, options)
 	assert.Nil(t, err)
-	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil)
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, nil)
 
 	if assert.Error(t, err) {
 		assert.Equal(t, &InvalidSignature{"Signer address must match message address"}, err)
@@ -362,7 +363,7 @@ func verificationNegative(t *testing.T, cases map[string]interface{}) {
 			timestamp = &parsed
 		}
 
-		_, err = message.Verify(data["signature"].(string), domainBinding, matchNonce, timestamp)
+		_, err = message.Verify(data["signature"].(string), domainBinding, matchNonce, timestamp, nil)
 
 		assert.Error(t, err, name)
 	}
@@ -387,10 +388,64 @@ func verificationPositive(t *testing.T, cases map[string]interface{}) {
 			timestamp = &parsed
 		}
 
-		_, err = message.Verify(data["signature"].(string), nil, nil, timestamp)
+		_, err = message.Verify(data["signature"].(string), nil, nil, timestamp, nil)
 
 		assert.Nil(t, err, name)
 	}
+}
+
+type mockProvider struct {
+	validSignatures map[string]bool
+}
+
+func (p *mockProvider) CallContract(ctx context.Context, to common.Address, data []byte) ([]byte, error) {
+	if p.validSignatures == nil {
+		p.validSignatures = make(map[string]bool)
+	}
+
+	// Extract the signature from the calldata (skip selector and hash)
+	sigOffset := 4 + 32 + 32 // selector + hash + offset
+	sigLenStart := sigOffset + 32 - 1
+	sigLen := int(data[sigLenStart])
+	signature := data[sigOffset+32 : sigOffset+32+sigLen]
+
+	if p.validSignatures[string(signature)] {
+		return ERC1271MagicValue[:], nil
+	}
+	return []byte{0x00, 0x00, 0x00, 0x00}, nil
+}
+
+func TestValidateERC1271(t *testing.T) {
+	provider := &mockProvider{
+		validSignatures: map[string]bool{},
+	}
+
+	privateKey, address := createWallet(t)
+	message, err := InitMessage(domain, address, uri, nonce, options)
+	assert.Nil(t, err)
+
+	hash := message.eip191Hash()
+	signature, err := crypto.Sign(hash, privateKey)
+	signature[64] += 27
+	assert.Nil(t, err)
+
+	// Test that ECDSA verification still works with provider
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, provider)
+	assert.Nil(t, err)
+
+	// Test that ERC-1271 verification works when signature is registered
+	contractAddr := "0x4242424242424242424242424242424242424242"
+	message, err = InitMessage(domain, contractAddr, uri, nonce, options)
+	assert.Nil(t, err)
+
+	provider.validSignatures[string(signature)] = true
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, provider)
+	assert.Nil(t, err)
+
+	// Test that ERC-1271 verification fails when signature is not registered
+	provider.validSignatures[string(signature)] = false
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, provider)
+	assert.Error(t, err)
 }
 
 func TestGlobalTestVector(t *testing.T) {
