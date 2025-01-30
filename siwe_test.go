@@ -173,7 +173,7 @@ func TestPrepareParseRequired(t *testing.T) {
 }
 
 func TestValidateEmpty(t *testing.T) {
-	_, err := message.Verify("", nil, nil, nil)
+	_, err := message.Verify("", nil, nil, nil, nil)
 
 	if assert.Error(t, err) {
 		assert.Equal(t, &InvalidSignature{"Signature cannot be empty"}, err)
@@ -205,7 +205,7 @@ func TestValidateNotBefore(t *testing.T) {
 
 	assert.Nil(t, err)
 
-	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil)
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, nil)
 
 	if assert.Error(t, err) {
 		assert.Equal(t, &InvalidMessage{"Message not yet valid"}, err)
@@ -226,7 +226,7 @@ func TestValidateExpirationTime(t *testing.T) {
 
 	assert.Nil(t, err)
 
-	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil)
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, nil)
 
 	if assert.Error(t, err) {
 		assert.Equal(t, &ExpiredMessage{"Message expired"}, err)
@@ -245,7 +245,7 @@ func TestValidate(t *testing.T) {
 
 	assert.Nil(t, err)
 
-	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil)
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, nil)
 
 	assert.Nil(t, err)
 }
@@ -265,7 +265,7 @@ func TestValidateTampered(t *testing.T) {
 
 	message, err = InitMessage(domain, otherAddress, uri, nonce, options)
 	assert.Nil(t, err)
-	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil)
+	_, err = message.Verify(hexutil.Encode(signature), nil, nil, nil, nil)
 
 	if assert.Error(t, err) {
 		assert.Equal(t, &InvalidSignature{"Signer address must match message address"}, err)
@@ -363,7 +363,7 @@ func verificationNegative(t *testing.T, cases map[string]interface{}) {
 			timestamp = &parsed
 		}
 
-		_, err = message.Verify(data["signature"].(string), domainBinding, matchNonce, timestamp)
+		_, err = message.Verify(data["signature"].(string), domainBinding, matchNonce, timestamp, nil)
 
 		assert.Error(t, err, name)
 	}
@@ -388,7 +388,7 @@ func verificationPositive(t *testing.T, cases map[string]interface{}) {
 			timestamp = &parsed
 		}
 
-		_, err = message.Verify(data["signature"].(string), nil, nil, timestamp)
+		_, err = message.Verify(data["signature"].(string), nil, nil, timestamp, nil)
 
 		assert.Nil(t, err, name)
 	}

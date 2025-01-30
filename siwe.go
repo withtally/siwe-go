@@ -419,7 +419,7 @@ func (m *Message) VerifyERC1271(ctx context.Context, signature string, provider 
 	hash := m.eip191Hash()
 
 	// Encode the isValidSignature call
-	// Function selector (4 bytes) + hash (32 bytes) + offset to signature bytes (32 bytes) 
+	// Function selector (4 bytes) + hash (32 bytes) + offset to signature bytes (32 bytes)
 	// + signature length (32 bytes) + signature bytes
 	calldata := make([]byte, 4+32+32+32+len(sigBytes))
 	copy(calldata[0:4], IsValidSignatureSelector[:])
